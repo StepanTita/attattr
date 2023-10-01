@@ -21,7 +21,7 @@ from torch.optim.optimizer import required
 from torch.nn.utils import clip_grad_norm_
 
 from collections import defaultdict
-from torch._six import container_abcs
+import collections.abc as container_abcs
 from copy import deepcopy
 from itertools import chain
 
@@ -66,10 +66,10 @@ class BertAdam(Optimizer):
         max_grad_norm: Maximum norm for the gradients (-1 means no clipping). Default: 1.0
     """
 
-    def __init__(self, params, lr=required, warmup=-1, t_total=-1, schedule='warmup_linear',
+    def __init__(self, params, lr=0.001, warmup=-1, t_total=-1, schedule='warmup_linear',
                  b1=0.9, b2=0.999, e=1e-6, weight_decay=0.01,
                  max_grad_norm=1.0):
-        if lr is not required and lr < 0.0:
+        if lr < 0.0:
             raise ValueError(
                 "Invalid learning rate: {} - should be >= 0.0".format(lr))
         if schedule not in SCHEDULES:

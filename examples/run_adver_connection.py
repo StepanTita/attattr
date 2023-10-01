@@ -350,7 +350,7 @@ def main():
     all_input_ids = torch.tensor(
         [f.input_ids for f in eval_features], dtype=torch.long)
     all_input_mask = torch.tensor(
-        [f.input_mask for f in eval_features], dtype=torch.long)
+        [f.attention_mask for f in eval_features], dtype=torch.long)
     all_segment_ids = torch.tensor(
         [f.segment_ids for f in eval_features], dtype=torch.long)
     all_label_ids = torch.tensor(

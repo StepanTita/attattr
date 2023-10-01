@@ -200,7 +200,7 @@ class BertEmbeddings(nn.Module):
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
-        if tar_layer >= 0:
+        if tar_layer is not None and tar_layer >= 0:
             embeddings = words_embeddings + position_embeddings + token_type_embeddings
         else:
             embeddings = position_embeddings + token_type_embeddings
@@ -229,7 +229,7 @@ class BertSelfAttention(nn.Module):
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[
-            :-1] + (self.num_attention_heads, self.attention_head_size)
+                      :-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
@@ -246,7 +246,7 @@ class BertSelfAttention(nn.Module):
         attention_scores = torch.matmul(
             query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / \
-            math.sqrt(self.attention_head_size)
+                           math.sqrt(self.attention_head_size)
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
         attention_scores = attention_scores + attention_mask
 
@@ -256,12 +256,12 @@ class BertSelfAttention(nn.Module):
             attention_probs = tmp_score
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
-        #attention_probs = self.dropout(attention_probs)
+        # attention_probs = self.dropout(attention_probs)
 
         context_layer = torch.matmul(attention_probs, value_layer)
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[
-            :-2] + (self.all_head_size,)
+                                  :-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
         if tmp_score is None:
             return context_layer, attention_probs
@@ -348,13 +348,13 @@ class BertEncoder(nn.Module):
         att_score = None
 
         # when the value of tar_layer is less than zero, it is getting the baseline attention score output.
-        if tar_layer < 0:
-            tar_layer = abs(tar_layer) - 1  
+        if tar_layer is not None and tar_layer < 0:
+            tar_layer = abs(tar_layer) - 1
         for layer_index, layer_module in enumerate(self.layer):
             if tar_layer == layer_index:
                 hidden_states, att_score = layer_module(hidden_states, attention_mask, tmp_score)
             else:
-                hidden_states, _ = layer_module(hidden_states, attention_mask)  
+                hidden_states, _ = layer_module(hidden_states, attention_mask)
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
         if not output_all_encoded_layers:
@@ -453,13 +453,13 @@ class PreTrainedBertModel(nn.Module):
 
     def __init__(self, config, *inputs, **kwargs):
         super(PreTrainedBertModel, self).__init__()
-        if not isinstance(config, BertConfig):
-            raise ValueError(
-                "Parameter config in `{}(config)` should be an instance of class `BertConfig`. "
-                "To create a model from a Google pretrained model use "
-                "`model = {}.from_pretrained(PRETRAINED_MODEL_NAME)`".format(
-                    self.__class__.__name__, self.__class__.__name__
-                ))
+        # if not isinstance(config, BertConfig):
+        #     raise ValueError(
+        #         "Parameter config in `{}(config)` should be an instance of class `BertConfig`. "
+        #         "To create a model from a Google pretrained model use "
+        #         "`model = {}.from_pretrained(PRETRAINED_MODEL_NAME)`".format(
+        #             self.__class__.__name__, self.__class__.__name__
+        #         ))
         self.config = config
 
     def init_bert_weights(self, module):
@@ -572,6 +572,7 @@ class PreTrainedBertModel(nn.Module):
             for name, child in module._modules.items():
                 if child is not None:
                     load(child, prefix + name + '.')
+
         load(model, prefix='' if hasattr(model, 'bert') else 'bert.')
         if len(missing_keys) > 0:
             logger.info("Weights of {} not initialized from pretrained model: {}".format(
@@ -630,14 +631,18 @@ class BertModel(PreTrainedBertModel):
     ```
     """
 
-    def __init__(self, config):
+    def __init__(self, config, add_pooling_layer=True):
         super(BertModel, self).__init__(config)
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
-        self.pooler = BertPooler(config)
+        if add_pooling_layer:
+            self.pooler = BertPooler(config)
+        else:
+            self.pooler = None
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True, tar_layer=None, tmp_score=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True,
+                tar_layer=None, tmp_score=None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -659,16 +664,20 @@ class BertModel(PreTrainedBertModel):
             dtype=next(self.parameters()).dtype)  # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
-        embedding_output = self.embeddings(input_ids, token_type_ids, tar_layer)
+        embedding_output = self.embeddings(input_ids=input_ids, token_type_ids=token_type_ids, tar_layer=tar_layer)
         encoded_layers, att_score = self.encoder(embedding_output,
-                                      extended_attention_mask,
-                                      output_all_encoded_layers=output_all_encoded_layers,
-                                      tar_layer=tar_layer,
-                                      tmp_score=tmp_score)
+                                                 extended_attention_mask,
+                                                 output_all_encoded_layers=output_all_encoded_layers,
+                                                 tar_layer=tar_layer,
+                                                 tmp_score=tmp_score)
         sequence_output = encoded_layers[-1]
-        pooled_output = self.pooler(sequence_output)
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
+
+        if self.pooler is None:
+            return encoded_layers, sequence_output, att_score
+
+        pooled_output = self.pooler(sequence_output)
         return encoded_layers, pooled_output, att_score
 
 
@@ -724,7 +733,8 @@ class BertForPreTraining(PreTrainedBertModel):
             config, self.bert.embeddings.word_embeddings.weight)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, next_sentence_label=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
+                next_sentence_label=None):
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                                    output_all_encoded_layers=False)
         prediction_scores, seq_relationship_score = self.cls(
@@ -745,7 +755,7 @@ class BertForPreTraining(PreTrainedBertModel):
 class BertPreTrainingPairTransform(nn.Module):
     def __init__(self, config):
         super(BertPreTrainingPairTransform, self).__init__()
-        self.dense = nn.Linear(config.hidden_size*2, config.hidden_size)
+        self.dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
         self.transform_act_fn = ACT2FN[config.hidden_act] \
             if isinstance(config.hidden_act, str) else config.hidden_act
         # self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-5)
@@ -792,7 +802,9 @@ class BertForPreTrainingLossMask(PreTrainedBertModel):
             self.crit_pair_rel = BertPreTrainingPairRel(
                 config, num_rel=num_rel)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, next_sentence_label=None, masked_pos=None, masked_weights=None, pair_x=None, pair_y=None, pair_r=None, pair_pos_neg_mask=None, pair_loss_mask=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
+                next_sentence_label=None, masked_pos=None, masked_weights=None, pair_x=None, pair_y=None, pair_r=None,
+                pair_pos_neg_mask=None, pair_loss_mask=None):
 
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                                    output_all_encoded_layers=False)
@@ -1017,19 +1029,20 @@ class BertForSequenceClassification(PreTrainedBertModel):
         self.classifier = nn.Linear(config.hidden_size, num_labels)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, tar_layer=None, tmp_score=None, pred_label=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, tar_layer=None, tmp_score=None,
+                pred_label=None):
         _, pooled_output, att_score = self.bert(
             input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False,
             tar_layer=tar_layer, tmp_score=tmp_score)
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
-        prob = torch.nn.functional.softmax(logits)
+        prob = torch.nn.functional.softmax(logits, dim=-1)
         tar_prob = prob[:, labels[0]]
 
         if tmp_score is None:
             return att_score[0], logits
         else:
-            #gradient = torch.autograd.grad(torch.unbind(prob[:, labels[0]]), tmp_score)
+            # gradient = torch.autograd.grad(torch.unbind(prob[:, labels[0]]), tmp_score)
             gradient = torch.autograd.grad(torch.unbind(prob[:, pred_label]), tmp_score)
             return tar_prob, gradient[0]
 
