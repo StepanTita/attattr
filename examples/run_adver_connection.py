@@ -22,7 +22,7 @@ from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.model_prune_head import BertForSequenceClassification, BertForPreTrainingLossMask
 from pytorch_pretrained_bert.optimization import BertAdam
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from examples.classifier_processer_tmp import InputExample, InputFeatures, DataProcessor, MrpcProcessor, MnliProcessor, RteProcessor, ScitailProcessor, ColaProcessor, SstProcessor, QqpProcessor, QnliProcessor, WnliProcessor, StsProcessor
+from examples.classifier_processer import InputExample, InputFeatures, DataProcessor, MrpcProcessor, MnliProcessor, RteProcessor, ScitailProcessor, ColaProcessor, SstProcessor, QqpProcessor, QnliProcessor, WnliProcessor, StsProcessor
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
@@ -150,7 +150,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
                           input_mask=input_mask,
                           segment_ids=segment_ids,
                           label_id=label_id,
-                          tokens=tokens,
                           baseline_ids=baseline_ids))
         tokenslist.append({"token":tokens, "golden_label":example.label, "pred_label":None})
     return features, tokenslist
@@ -341,7 +340,7 @@ def main():
 
     saved_res = []
 
-    eval_features, _ = convert_examples_to_features(
+    eval_features, tokenslist = convert_examples_to_features(
         eval_examples, label_list, args.max_seq_length, tokenizer, args.task_name)
     logger.info("***** Running evaluation: %s *****", eval_segment)
     logger.info("  Num examples = %d", len(eval_examples))
@@ -355,7 +354,7 @@ def main():
         [f.segment_ids for f in eval_features], dtype=torch.long)
     all_label_ids = torch.tensor(
         [f.label_id for f in eval_features], dtype=lbl_type)
-    all_tokens = [f.tokens for f in eval_features]
+    all_tokens = [t for t in tokenslist]
 
     eval_data = TensorDataset(
         all_baseline_ids, all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
@@ -380,8 +379,7 @@ def main():
         seg_pos = tokens.index("[SEP]")
         tar_head_attr = None
 
-        with torch.no_grad():
-            tmp_eval_loss, baseline_logits = model(input_ids, "res", segment_ids, input_mask, label_ids)
+        tmp_eval_loss, baseline_logits = model(input_ids, "res", segment_ids, input_mask, label_ids)
         pred_label = int(torch.argmax(baseline_logits))
         attr_max = None   
 
